@@ -1,14 +1,13 @@
-# DOGE 币本位 OI 监控 — GitHub Actions 定时版(已暂停定时, 保留手动触发)
-# 2026-11-12: 主监控已迁到境外非美机房的常驻 Worker(MODE=worker)。
-# GitHub 托管 runner 在美国, dapi.binance.com 对美国 IP 返回 451,
-# 每 5 分钟定时跑只会白跑, 故注释掉 schedule, 避免刷无意义的运行记录。
-# 切回 Actions 时: 取消下面 schedule 两行注释 + mode.conf 改回 MODE=actions
+# DOGE 币本位 OI 监控 — GitHub Actions 定时版
+# 2026-11-12 23:30: 恢复定时。GitHub 托管 runner 在美国, 币安 dAPI 返回 451,
+# 主脚本会自动降级到 OKX 的币本位永续 DOGE-USD-SWAP(报告标注当前数据源)。
+# 若以后迁到非美机房的常驻 Worker, 会优先用回币安官方口径, 代码无需改动。
 name: 狗狗币持仓监控
 
 on:
-  # schedule:
-  #   - cron: '*/5 * * * *'
-  workflow_dispatch:            # 保留手动触发, 便于临时验证
+  schedule:
+    - cron: '*/5 * * * *'      # 每 5 分钟一次(UTC, 全天运行)
+  workflow_dispatch:            # 允许手动点 "Run workflow" 立刻测一次
 
 # 避免同一时刻排队产生多个实例(状态文件提交回仓库时尤其需要)
 concurrency:
@@ -36,37 +35,6 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-
-      # 临时诊断: 在美国 runner 上实测哪些行情源能绕开 451 / 是否存在币本位 DOGE
-      - name: 探测可用行情源
-        if: github.event_name == 'workflow_dispatch'
-        run: |
-          python3 - <<'PY'
-          import urllib.request, urllib.error
-          probes = [
-            ("data.binance 202?", "https://data.binance.com/dapi/v1/ticker/price?symbol=DOGEUSD_PERP"),
-            ("okx ticker", "https://www.okx.com/api/v5/market/ticker?instId=DOGE-USD-SWAP"),
-            ("okx candles 5m", "https://www.okx.com/api/v5/market/candles?instId=DOGE-USD-SWAP&bar=5m&limit=2"),
-            ("okx open-interest", "https://www.okx.com/api/v5/public/open-interest?instId=DOGE-USD-SWAP"),
-            ("okx funding-rate", "https://www.okx.com/api/v5/public/funding-rate?instId=DOGE-USD-SWAP"),
-            ("okx funding hist", "https://www.okx.com/api/v5/public/funding-rate-history?instId=DOGE-USD-SWAP&limit=2"),
-            ("okx ls ratio", "https://www.okx.com/api/v5/rubik/stat/contracts/long-short-account-ratio?ccy=DOGE"),
-            ("okx oi volume", "https://www.okx.com/api/v5/rubik/stat/contracts/open-interest-volume?ccy=DOGE"),
-          ]
-          for name, url in probes:
-              try:
-                  req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-                  with urllib.request.urlopen(req, timeout=8) as r:
-                      raw = r.read().decode("utf-8", "replace")
-                      code = r.status
-                  print("OK   %-20s HTTP %s len=%d  %s" % (name, code, len(raw), raw[:360].replace("\n", " ")), flush=True)
-              except urllib.error.HTTPError as e:
-                  try: detail = e.read().decode("utf-8", "replace")[:160]
-                  except Exception: detail = ""
-                  print("FAIL %-20s HTTP %s  %s" % (name, e.code, detail), flush=True)
-              except Exception as e:
-                  print("FAIL %-20s %s" % (name, type(e).__name__), flush=True)
-          PY
 
       # 手动点 "Run workflow" 时, 先自检并往 Telegram 发一条测试消息,
       # 手机收到「✅ DOGE OI 提醒配置成功」即代表整条链路已接通

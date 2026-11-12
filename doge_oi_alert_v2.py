@@ -75,6 +75,13 @@ FUND_HOT    = 0.0005   # 费率过热阈值(0.05%)
 
 BASE = "https://dapi.binance.com/dapi/v1"
 TG_API = "https://api.telegram.org/bot"
+# 币安 dapi 对美国 IP 返回 451(GitHub Actions 托管 runner 即属此类)。
+# 降级源 OKX 的 DOGE-USD-SWAP 同为「币本位永续」, 信号逻辑不变;
+# 币安可用时永远优先用币安, 仅 451/超时才降级, 报告会标注当前数据源。
+OKX_BASE = "https://www.okx.com/api/v5"
+OKX_INST = "DOGE-USD-SWAP"
+SRC_BINANCE = "币安 DOGEUSD_PERP"
+SRC_OKX = "OKX DOGE-USD-SWAP (降级源)"
 LEVEL_ORDER = {"A": 3, "B": 2, "C": 1}
 LEVEL_TAG = {"A": "[A]强", "B": "[B]中", "C": "[C]弱"}
 # 状态文件: 记住上次推送过什么, 这样定时跑 --once 或脚本重启都不会重复推送
@@ -182,6 +189,7 @@ def check_setup():
         ("币安币本位 dAPI", f"{BASE}/ticker/price?symbol={SYMBOL}"),
         ("币安现货镜像", "https://data-api.binance.vision/api/v3/ticker/price?symbol=DOGEUSDT"),
         ("Gate.io 永续", "https://api.gateio.ws/api/v4/futures/usdt/contracts/DOGE_USDT"),
+        ("OKX 币本位(降级源)", f"{OKX_BASE}/market/ticker?instId={OKX_INST}"),
     ]
     for name, url in probes:
         try:
@@ -195,7 +203,7 @@ def check_setup():
             print(f"    ❌ {name}: {e}", flush=True)
 
     print("-" * 56, flush=True)
-    print("自检完成。1/2 全 ✅ 且第 3 项中「币安币本位 dAPI」可用, 才能正常判定。", flush=True)
+    print("自检完成。1/2 全 ✅, 且第 3 项中「币安币本位 dAPI」或「OKX 币本位」任一可用即可判定。", flush=True)
     print("=" * 56, flush=True)
 
 
@@ -232,8 +240,8 @@ def get_json(url):
         return json.loads(r.read().decode("utf-8"))
 
 
-def fetch_snapshot():
-    """拉取一帧实时数据。必需字段失败才整体放弃; 多空人数比可缺失(降级为 None)"""
+def _fetch_snapshot_binance():
+    """币安官方口径(优先)。必需字段失败才整体放弃; 多空人数比可缺失"""
     def must(label, fn):
         try:
             return fn()
@@ -288,6 +296,61 @@ def fetch_snapshot():
             "fund_now": fund_now, "fund_prev": fund_prev,
             "long_short": long_short, "ts": int(time.time() * 1000),
             "extra": [], "_note": ""}
+
+
+def fetch_snapshot_okx():
+    """降级源: OKX 币本位永续 DOGE-USD-SWAP。仅在币安不可用时调用。"""
+    def okx(path):
+        j = get_json(f"{OKX_BASE}/{path}")
+        if j.get("code") != "0" or not j.get("data"):
+            raise ValueError(f"OKX 返回异常: {str(j)[:140]}")
+        return j["data"]
+
+    try:
+        price = float(okx(f"market/ticker?instId={OKX_INST}")[0]["last"])
+        kl = okx(f"market/candles?instId={OKX_INST}&bar={PERIOD}&limit=2")
+        # OKX K线倒序: [0]=当前根, [1]=上一根; 与币安分支取「上一根开盘」保持一致
+        if not kl:
+            raise ValueError("K线返回空")
+        prev_open = float(kl[1][1]) if len(kl) > 1 else float(kl[0][1])
+        # data 倒序: [ts, oi, vol]; 默认 5m 间隔
+        oi = okx("rubik/stat/contracts/open-interest-volume?ccy=DOGE")
+        if not oi:
+            raise ValueError("OI 历史返回空")
+        oi_now = float(oi[0][1])
+        oi_prev = float(oi[1][1]) if len(oi) > 1 else oi_now
+        fr = okx(f"public/funding-rate-history?instId={OKX_INST}&limit=2")
+        if not fr:
+            raise ValueError("资金费率返回空")
+        fund_now = float(fr[0]["fundingRate"])
+        fund_prev = float(fr[1]["fundingRate"]) if len(fr) > 1 else fund_now
+    except Exception as e:
+        print(f"[ERR] OKX 降级源必需数据失败({e}), 本帧跳过判定", flush=True)
+        return None
+
+    return {"price": price, "prev_open": prev_open,
+            "oi_now": oi_now, "oi_prev": oi_prev,
+            "fund_now": fund_now, "fund_prev": fund_prev,
+            # OKX 的多空账户比是「币种」维度(实测约 4.9), 与币安「单合约」维度(约 1~3)
+            # 口径不同, 直接套 LSR_HIGH/LOW 会永远误判极端多头, 故本维度不参与判定
+            "long_short": None, "ts": int(time.time() * 1000),
+            "extra": [], "_source": SRC_OKX,
+            "_note": "降级源 OKX; 多空账户比口径不同, 本帧不参与判定"}
+
+
+def fetch_snapshot():
+    """币安官方口径优先; 451/网络失败时自动降级到 OKX 币本位永续。
+
+    设 DOGE_DISABLE_FALLBACK=1 可禁用降级(只用币安)。
+    """
+    snap = _fetch_snapshot_binance()
+    if snap is not None:
+        snap["_source"] = SRC_BINANCE
+        return snap
+    if os.environ.get("DOGE_DISABLE_FALLBACK", "").strip() == "1":
+        return None
+    print("[FALLBACK] 币安不可用, 切换 OKX 币本位 DOGE-USD-SWAP", flush=True)
+    return fetch_snapshot_okx()
 
 
 def gen_signals(d):
@@ -396,6 +459,8 @@ def render_report(d, sigs, price_chg, oi_chg, resonance):
     lines = []
     lines.append("=" * 56)
     lines.append(f"  DOGE 币本位 OI 盘面判定   {fmt_time(d['ts'])}")
+    if d.get("_source"):
+        lines.append(f"  数据源: {d['_source']}")
     if d.get("_note"):
         lines.append(f"  ⚠️ {d['_note']}")
     lines.append("=" * 56)
@@ -496,6 +561,8 @@ def once(d, demo=False):
         msg += "\n".join(f"{esc(LEVEL_TAG[lv])} {esc(t)}\n   {esc(dt)}"
                          for lv, t, dt in push_sigs)
         msg += f"\n\n当前状态: {esc(judge_market(d, price_chg, oi_chg)[0])}"
+        if d.get("_source"):
+            msg += f"\n数据源: {esc(d['_source'])}"
         print(">>> 推送到手机 + 电脑 Telegram", flush=True)
         send_telegram(msg)
         st["push_key"] = push_key
