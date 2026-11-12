@@ -1,0 +1,16 @@
+# Telegram 凭证 —— 含 Bot Token, 绝不提交
+.env
+.env.*
+!.env.example
+
+# Python 运行产物
+__pycache__/
+*.py[cod]
+.venv/
+.DS_Store
+
+# WorkBuddy 本地工作记忆, 只留本机
+.workbuddy/
+
+# 注意: .doge_oi_state.json 故意不忽略 —— GitHub Actions 靠把它提交回仓库
+# 来持久化「上次推过什么」, 否则每 5 分钟会重复推送同一条信号。

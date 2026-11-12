@@ -1,0 +1,26 @@
+# 自建 VPS / 本地自测用:
+#   cp .env.example .env   # 填入真实 token / chat_id, 此文件已被 .gitignore 排除
+#   docker compose up -d --build
+# 也可以不建 .env, 直接在 shell 里 export DOGE_TG_TOKEN / DOGE_TG_CHAT_ID
+# (compose 会自动读项目根目录的 .env 做变量插值, 所以这里不需要 env_file)
+services:
+  doge-oi:
+    build: .
+    restart: unless-stopped
+    environment:
+      # ${VAR:?提示} 让漏配时直接报清楚原因, 而不是起一个静默不推送的容器
+      DOGE_TG_TOKEN: ${DOGE_TG_TOKEN:?请在 .env 或 shell 中设置 DOGE_TG_TOKEN}
+      DOGE_TG_CHAT_ID: ${DOGE_TG_CHAT_ID:?请在 .env 或 shell 中设置 DOGE_TG_CHAT_ID}
+      TZ: ${TZ:-Asia/Shanghai}
+      DOGE_STATE_DIR: /data
+    volumes:
+      # 持久化「上次推过什么」, 容器重启后不会重复推同一条信号
+      - doge-oi-state:/data
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  doge-oi-state:

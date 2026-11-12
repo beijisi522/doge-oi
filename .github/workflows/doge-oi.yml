@@ -1,0 +1,61 @@
+# DOGE 币本位 OI 监控 — GitHub Actions 定时版
+# 手机浏览器即可完成全部配置, 公开仓库免费
+# 注意: GitHub 的 schedule 实际常延迟数分钟、高峰期可能跳过, 做 5m 短线
+#       更推荐把 mode.conf 切到 MODE=worker 用常驻 Worker(60s 轮询)
+name: 狗狗币持仓监控
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'      # 每 5 分钟一次(UTC, 全天运行)
+  workflow_dispatch:            # 允许手动点 "Run workflow" 立刻测一次
+
+# 避免同一时刻排队产生多个实例(状态文件提交回仓库时尤其需要)
+concurrency:
+  group: doge-oi-monitor
+  cancel-in-progress: true
+
+permissions:
+  contents: write              # 允许把推送状态文件提交回仓库
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    env:
+      TZ: Asia/Shanghai
+      DOGE_TG_TOKEN: ${{ secrets.DOGE_TG_TOKEN }}
+      DOGE_TG_CHAT_ID: ${{ secrets.DOGE_TG_CHAT_ID }}
+    steps:
+      - name: 取代码
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: 装 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      # 手动点 "Run workflow" 时, 先自检并往 Telegram 发一条测试消息,
+      # 手机收到「✅ DOGE OI 提醒配置成功」即代表整条链路已接通
+      - name: 手动触发时验证链路
+        if: github.event_name == 'workflow_dispatch'
+        run: python3 doge_oi_alert_v2.py --check
+
+      - name: 跑一次判定
+        run: python3 doge_oi_alert_v2.py --once
+
+      # 状态直接存仓库, 比 actions/cache 可靠: 缓存条目不可变、7 天淘汰、
+      # 且带 run_id 时每天会产生 ~288 个条目、并发取消还可能恢复旧状态。
+      # 脚本只在 push_key 变化时才写文件, 所以这里仅信号变化才产生一次提交。
+      - name: 保存推送状态
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -f .doge_oi_state.json 2>/dev/null || true
+          if git diff --cached --quiet; then
+            echo "状态无变化, 不提交"
+          else
+            git commit -m "chore: 更新 OI 推送状态 [skip ci]"
+            git push || { git pull --rebase origin HEAD && git push; }
+          fi
