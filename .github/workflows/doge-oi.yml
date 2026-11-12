@@ -6,8 +6,18 @@ name: 狗狗币持仓监控
 
 on:
   schedule:
+    # 兜底: GitHub 对新仓库的高频 schedule 会延迟数小时甚至丢弃,
+    # 主力触发由本机 launchd 走 workflow_dispatch(见 trigger_actions.sh)。
     - cron: '*/5 * * * *'      # 每 5 分钟一次(UTC, 全天运行)
   workflow_dispatch:            # 允许手动点 "Run workflow" 立刻测一次
+    inputs:
+      self_check:
+        description: '是否额外发一条 Telegram 测试消息'
+        type: choice
+        default: 'yes'
+        options:
+          - 'yes'
+          - 'no'
 
 # 避免同一时刻排队产生多个实例(状态文件提交回仓库时尤其需要)
 concurrency:
@@ -36,10 +46,10 @@ jobs:
         with:
           python-version: '3.11'
 
-      # 手动点 "Run workflow" 时, 先自检并往 Telegram 发一条测试消息,
-      # 手机收到「✅ DOGE OI 提醒配置成功」即代表整条链路已接通
+      # 手动点 "Run workflow" 且 self_check=yes 时, 先自检并发一条测试消息。
+      # 本机 launchd 每 5 分钟以 self_check=no 触发, 不会刷屏。
       - name: 手动触发时验证链路
-        if: github.event_name == 'workflow_dispatch'
+        if: github.event_name == 'workflow_dispatch' && inputs.self_check == 'yes'
         run: python3 doge_oi_alert_v2.py --check
 
       - name: 跑一次判定
