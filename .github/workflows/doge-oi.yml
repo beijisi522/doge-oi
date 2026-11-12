@@ -42,34 +42,30 @@ jobs:
         if: github.event_name == 'workflow_dispatch'
         run: |
           python3 - <<'PY'
-          import urllib.request, urllib.error, re
+          import urllib.request, urllib.error
           probes = [
-            ("binance dapi", "https://dapi.binance.com/dapi/v1/ticker/price?symbol=DOGEUSD_PERP"),
-            ("binance vision dapi", "https://data-api.binance.vision/dapi/v1/ticker/price?symbol=DOGEUSD_PERP"),
-            ("binance gcp dapi", "https://api-gcp.binance.com/dapi/v1/ticker/price?symbol=DOGEUSD_PERP"),
-            ("binance data dapi", "https://data.binance.com/dapi/v1/ticker/price?symbol=DOGEUSD_PERP"),
-            ("binance api1 dapi", "https://api1.binance.com/dapi/v1/ticker/price?symbol=DOGEUSD_PERP"),
-            ("binance api dapi", "https://api.binance.com/dapi/v1/ticker/price?symbol=DOGEUSD_PERP"),
-            ("binance fapi", "https://fapi.binance.com/fapi/v1/ticker/price?symbol=DOGEUSDT"),
-            ("binance vision spot", "https://data-api.binance.vision/api/v3/ticker/price?symbol=DOGEUSDT"),
-            ("gate btc-settled list", "https://api.gateio.ws/api/v4/futures/btc/contracts"),
-            ("gate usdt DOGE", "https://api.gateio.ws/api/v4/futures/usdt/contracts/DOGE_USDT"),
-            ("okx swap list", "https://www.okx.com/api/v5/public/instruments?instType=SWAP"),
-            ("bybit inverse DOGEUSD", "https://api.bybit.com/v5/market/tickers?category=inverse&symbol=DOGEUSD"),
+            ("data.binance 202?", "https://data.binance.com/dapi/v1/ticker/price?symbol=DOGEUSD_PERP"),
+            ("okx ticker", "https://www.okx.com/api/v5/market/ticker?instId=DOGE-USD-SWAP"),
+            ("okx candles 5m", "https://www.okx.com/api/v5/market/candles?instId=DOGE-USD-SWAP&bar=5m&limit=2"),
+            ("okx open-interest", "https://www.okx.com/api/v5/public/open-interest?instId=DOGE-USD-SWAP"),
+            ("okx funding-rate", "https://www.okx.com/api/v5/public/funding-rate?instId=DOGE-USD-SWAP"),
+            ("okx funding hist", "https://www.okx.com/api/v5/public/funding-rate-history?instId=DOGE-USD-SWAP&limit=2"),
+            ("okx ls ratio", "https://www.okx.com/api/v5/rubik/stat/contracts/long-short-account-ratio?ccy=DOGE"),
+            ("okx oi volume", "https://www.okx.com/api/v5/rubik/stat/contracts/open-interest-volume?ccy=DOGE"),
           ]
           for name, url in probes:
               try:
                   req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-                  with urllib.request.urlopen(req, timeout=7) as r:
+                  with urllib.request.urlopen(req, timeout=8) as r:
                       raw = r.read().decode("utf-8", "replace")
                       code = r.status
-                  hits = re.findall(r'"[^"]{0,40}DOGE[^"]{0,40}"', raw, re.I)[:4]
-                  extra = ("  | DOGE: " + ", ".join(hits)) if hits else ""
-                  print("OK   %-24s HTTP %s  %s%s" % (name, code, raw[:90].replace("\n", " "), extra), flush=True)
+                  print("OK   %-20s HTTP %s len=%d  %s" % (name, code, len(raw), raw[:360].replace("\n", " ")), flush=True)
               except urllib.error.HTTPError as e:
-                  print("FAIL %-24s HTTP %s" % (name, e.code), flush=True)
+                  try: detail = e.read().decode("utf-8", "replace")[:160]
+                  except Exception: detail = ""
+                  print("FAIL %-20s HTTP %s  %s" % (name, e.code, detail), flush=True)
               except Exception as e:
-                  print("FAIL %-24s %s" % (name, type(e).__name__), flush=True)
+                  print("FAIL %-20s %s" % (name, type(e).__name__), flush=True)
           PY
 
       # 手动点 "Run workflow" 时, 先自检并往 Telegram 发一条测试消息,
