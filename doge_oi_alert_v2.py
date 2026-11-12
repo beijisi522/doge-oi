@@ -35,6 +35,7 @@ v2 相比 v1 新增:
 
 import urllib.request
 import urllib.parse
+import urllib.error
 import json
 import os
 import time
@@ -165,20 +166,36 @@ def check_setup():
                 print(f"[2] ✅ 测试消息已发出 (chat_id={TELEGRAM_CHAT_ID}) 去 Telegram 看一眼", flush=True)
             else:
                 print(f"[2] ❌ 发送被拒: {j}", flush=True)
+        except urllib.error.HTTPError as e:
+            detail = e.read().decode("utf-8", "replace")[:300]
+            print(f"[2] ❌ 发送失败: HTTP {e.code} {e.reason}", flush=True)
+            print(f"     Telegram 返回: {detail}", flush=True)
+            print("     -> 常见原因: chat_id 填错 / 还没给机器人发过 /start / 填成了用户名", flush=True)
         except Exception as e:
             print(f"[2] ❌ 发送失败: {e}", flush=True)
             print("     -> 常见原因: chat_id 填错, 或你还没给机器人发过 /start", flush=True)
 
-    # 3. 币安接口连通性
-    try:
-        p = get_json(f"{BASE}/ticker/price?symbol={SYMBOL}")
-        print(f"[3] ✅ 币安 dAPI 连通, DOGEUSD_PERP 当前价 {p['price']}", flush=True)
-    except Exception as e:
-        print(f"[3] ❌ 币安 dAPI 连不上: {e}", flush=True)
-        print("     -> 国内网络通常需代理; 或把脚本放到境外 VPS 上跑", flush=True)
+    # 3. 行情数据源连通性。币安对部分地区(含 GitHub Actions 的美国 IP)返回 451,
+    #    逐个探测便于一眼看出这台机器上哪些源能用。
+    print("[3] 行情数据源连通性:", flush=True)
+    probes = [
+        ("币安币本位 dAPI", f"{BASE}/ticker/price?symbol={SYMBOL}"),
+        ("币安现货镜像", "https://data-api.binance.vision/api/v3/ticker/price?symbol=DOGEUSDT"),
+        ("Gate.io 永续", "https://api.gateio.ws/api/v4/futures/usdt/contracts/DOGE_USDT"),
+    ]
+    for name, url in probes:
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(req, timeout=8) as r:
+                body = r.read(120).decode("utf-8", "replace")
+            print(f"    ✅ {name}: {body[:80]}", flush=True)
+        except urllib.error.HTTPError as e:
+            print(f"    ❌ {name}: HTTP {e.code} {e.reason}", flush=True)
+        except Exception as e:
+            print(f"    ❌ {name}: {e}", flush=True)
 
     print("-" * 56, flush=True)
-    print("自检完成。1/2/3 全 ✅ 就可以正式跑了。", flush=True)
+    print("自检完成。1/2 全 ✅ 且第 3 项中「币安币本位 dAPI」可用, 才能正常判定。", flush=True)
     print("=" * 56, flush=True)
 
 
