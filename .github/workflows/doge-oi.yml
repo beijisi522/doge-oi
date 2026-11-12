@@ -1,13 +1,14 @@
-# DOGE 币本位 OI 监控 — GitHub Actions 定时版
-# 手机浏览器即可完成全部配置, 公开仓库免费
-# 注意: GitHub 的 schedule 实际常延迟数分钟、高峰期可能跳过, 做 5m 短线
-#       更推荐把 mode.conf 切到 MODE=worker 用常驻 Worker(60s 轮询)
+# DOGE 币本位 OI 监控 — GitHub Actions 定时版(已暂停定时, 保留手动触发)
+# 2026-11-12: 主监控已迁到境外非美机房的常驻 Worker(MODE=worker)。
+# GitHub 托管 runner 在美国, dapi.binance.com 对美国 IP 返回 451,
+# 每 5 分钟定时跑只会白跑, 故注释掉 schedule, 避免刷无意义的运行记录。
+# 切回 Actions 时: 取消下面 schedule 两行注释 + mode.conf 改回 MODE=actions
 name: 狗狗币持仓监控
 
 on:
-  schedule:
-    - cron: '*/5 * * * *'      # 每 5 分钟一次(UTC, 全天运行)
-  workflow_dispatch:            # 允许手动点 "Run workflow" 立刻测一次
+  # schedule:
+  #   - cron: '*/5 * * * *'
+  workflow_dispatch:            # 保留手动触发, 便于临时验证
 
 # 避免同一时刻排队产生多个实例(状态文件提交回仓库时尤其需要)
 concurrency:
