@@ -42,3 +42,11 @@ if [ "$CODE" = "204" ]; then
 else
   log "WARN  HTTP $CODE  $(head -c 160 /tmp/doge_dispatch_body 2>/dev/null | tr -d '\n')"
 fi
+
+# 顺带检查上一次已完成的判定: 若真推了 A 级信号, 在 Mac 弹一条系统通知。
+# 用脚本自身目录推导, 换电脑只要两个脚本放一起即可, 不用改路径。
+SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+NOTIFY="$SELF_DIR/desktop_notify.sh"
+if [ -f "$NOTIFY" ]; then
+  /bin/bash "$NOTIFY" >> "$LOG" 2>&1 || log "WARN  桌面通知检查失败(不影响判定)"
+fi
