@@ -28,17 +28,25 @@ TOKEN=$("$GH" auth token 2>/dev/null) || TOKEN=""
 if [ -z "$TOKEN" ]; then log "ERROR 取 GitHub token 失败"; exit 1; fi
 
 # self_check=no 是关键: 否则每次触发都会往 Telegram 发一条「配置成功」测试消息。
+# 每小时开头(分钟 00-04)的那次顺带带 hourly=yes, 出一条盘面汇总。
+# 每 5 分钟一次, 每小时必有一次落在这个区间; 即使漏了, GitHub 的 '7 * * * *'
+# cron 也会兜底, 脚本内按 UTC 小时去重, 两边都触发也只推一条。
+MIN=$(date +%M)
+HOURLY="no"
+if [ "$((10#$MIN))" -lt 5 ]; then HOURLY="yes"; fi
+BODY=$(printf '{"ref":"main","inputs":{"self_check":"no","hourly":"%s"}}' "$HOURLY")
+
 CODE=$(curl -s -o /tmp/doge_dispatch_body -w '%{http_code}' --max-time 20 \
   -X POST \
   -H "Authorization: Bearer $TOKEN" \
   -H "Accept: application/vnd.github+json" \
   -H "X-GitHub-Api-Version: 2022-11-28" \
   -H "Content-Type: application/json" \
-  -d '{"ref":"main","inputs":{"self_check":"no"}}' \
+  -d "$BODY" \
   "$API")
 
 if [ "$CODE" = "204" ]; then
-  log "OK    HTTP 204  已触发判定 (self_check=no, 不发测试消息)"
+  log "OK    HTTP 204  已触发判定 (self_check=no, hourly=$HOURLY)"
 else
   log "WARN  HTTP $CODE  $(head -c 160 /tmp/doge_dispatch_body 2>/dev/null | tr -d '\n')"
 fi

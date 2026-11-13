@@ -577,6 +577,67 @@ def once(d, demo=False):
     return sigs
 
 
+def hourly():
+    """每小时盘面汇总: 不受 A 级门槛限制, 固定推一条(手机 Telegram + 电脑弹窗)。
+
+    同一个 UTC 小时只推一次, 靠状态文件里的 last_hour 去重 —— 这样
+    GitHub 每小时 cron 与本机触发器的兜底不会重复推两条。
+    """
+    print("[每小时盘面汇总模式] 本次不受 A 级门槛限制\n", flush=True)
+    d = fetch_snapshot()
+    if not d:
+        print("[ERR] 行情拉取失败, 本次不出汇总", flush=True)
+        return
+
+    sigs, price_chg, oi_chg = gen_signals(d)
+    resonance = sum(1 for s in sigs if s[0] == "A") >= MIN_A_RESONANCE
+    state, read, bias = judge_market(d, price_chg, oi_chg)
+    # 打印完整报告, 桌面通知脚本会从日志里提取 价格/状态/信号 三行
+    print(render_report(d, sigs, price_chg, oi_chg, resonance), flush=True)
+
+    hour_key = time.strftime("%Y-%m-%d %H", time.gmtime()) + " UTC"
+    st = load_state()
+    if st.get("last_hour") == hour_key:
+        print(f">>> 本小时({hour_key})已汇总过, 跳过(去重)", flush=True)
+        return
+    if not push_allowed():
+        print("[静默] 当前 MODE 下本进程不负责推送, 汇总仅打印", flush=True)
+        return
+    if not (TELEGRAM_TOKEN and TELEGRAM_CHAT_ID):
+        print("[提示] 未配置 Telegram, 汇总仅打印", flush=True)
+        return
+
+    lsr = d.get("long_short")
+    a = sum(1 for s in sigs if s[0] == "A")
+    b = sum(1 for s in sigs if s[0] == "B")
+    c = sum(1 for s in sigs if s[0] == "C")
+    lines = [
+        "📊 <b>DOGE 每小时盘面汇总</b>",
+        esc(f"{fmt_time(d['ts'])}  |  {hour_key}"),
+        "",
+        esc(f"价格 {d['price']:.5f}   周期 {price_chg*100:+.2f}%   OI {oi_chg*100:+.2f}%"),
+        esc("资金费率 %+.4f%%   多空账户比 %s" % (
+            d["fund_now"] * 100, f"{lsr:.2f}" if lsr is not None else "缺数据")),
+        "",
+        esc(f"状态: {state}"),
+        esc(f"信号: A强 {a} / B中 {b} / C弱 {c}" + ("   🚨共振" if resonance else "")),
+    ]
+    for lv, title, detail in sigs[:4]:
+        lines.append(esc(f"   {LEVEL_TAG[lv]} {title}: {detail}"))
+    lines += ["", esc(f"操作: {bias}")]
+    if d.get("_source"):
+        lines.append(esc(f"数据源: {d['_source']}"))
+    if d.get("_note"):
+        lines.append(esc(f"注: {d['_note']}"))
+    msg = "\n".join(lines)
+
+    print(">>> 每小时盘面汇总已推送 (Telegram 手机+电脑 / macOS 弹窗)", flush=True)
+    send_telegram(msg)
+    # 保留原有 push_key, 否则会把「上次推过什么信号」清掉导致重复推 A 级
+    st["last_hour"] = hour_key
+    save_state(st)
+
+
 def main():
     args = sys.argv[1:]
     if "--check" in args:
@@ -591,6 +652,9 @@ def main():
         d = fetch_snapshot()
         if d:
             once(d)
+        return
+    if "--hourly" in args:
+        hourly()
         return
 
     print("=== DOGE 币本位 OI 提醒脚本 v2 (信号分级版) 启动 ===", flush=True)

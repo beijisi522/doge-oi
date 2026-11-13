@@ -2,6 +2,7 @@
 # 2026-11-12 23:30: 恢复定时。GitHub 托管 runner 在美国, 币安 dAPI 返回 451,
 # 主脚本会自动降级到 OKX 的币本位永续 DOGE-USD-SWAP(报告标注当前数据源)。
 # 若以后迁到非美机房的常驻 Worker, 会优先用回币安官方口径, 代码无需改动。
+# 2026-11-13: 新增每小时盘面汇总(不受 A 级门槛限制, 同一 UTC 小时去重)。
 name: 狗狗币持仓监控
 
 on:
@@ -9,12 +10,22 @@ on:
     # 兜底: GitHub 对新仓库的高频 schedule 会延迟数小时甚至丢弃,
     # 主力触发由本机 launchd 走 workflow_dispatch(见 trigger_actions.sh)。
     - cron: '*/5 * * * *'      # 每 5 分钟一次(UTC, 全天运行)
+    # 每小时第 7 分钟出一条盘面汇总。选 7 分是为了不与 */5 的任何一次重合。
+    # 低频 cron 在 GitHub 上比 */5 可靠得多, 即使本机 launchd 没装也能收到。
+    - cron: '7 * * * *'
   workflow_dispatch:            # 允许手动点 "Run workflow" 立刻测一次
     inputs:
       self_check:
         description: '是否额外发一条 Telegram 测试消息'
         type: choice
         default: 'yes'
+        options:
+          - 'yes'
+          - 'no'
+      hourly:
+        description: '是否额外出一条每小时盘面汇总'
+        type: choice
+        default: 'no'
         options:
           - 'yes'
           - 'no'
@@ -52,12 +63,19 @@ jobs:
         if: github.event_name == 'workflow_dispatch' && inputs.self_check == 'yes'
         run: python3 doge_oi_alert_v2.py --check
 
+      # 每小时汇总那次只跑 --hourly, 不重复做 5 分钟判定
       - name: 跑一次判定
+        if: github.event.schedule != '7 * * * *'
         run: python3 doge_oi_alert_v2.py --once
+
+      # 两个触发源互为兜底: GitHub 每小时 cron + 本机触发器在每小时开头带 hourly=yes
+      - name: 每小时盘面汇总
+        if: github.event.schedule == '7 * * * *' || inputs.hourly == 'yes'
+        run: python3 doge_oi_alert_v2.py --hourly
 
       # 状态直接存仓库, 比 actions/cache 可靠: 缓存条目不可变、7 天淘汰、
       # 且带 run_id 时每天会产生 ~288 个条目、并发取消还可能恢复旧状态。
-      # 脚本只在 push_key 变化时才写文件, 所以这里仅信号变化才产生一次提交。
+      # 脚本只在 push_key / last_hour 变化时才写文件, 所以这里很少产生提交。
       - name: 保存推送状态
         run: |
           git config user.name "github-actions[bot]"

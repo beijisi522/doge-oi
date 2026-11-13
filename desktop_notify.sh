@@ -74,27 +74,34 @@ for l in raw:
     lines.append(body)
 joined = "\n".join(lines)
 
-sent = (">>> 推送到手机" in joined)
-clear = (">>> 强信号解除" in joined)
-if not (sent or clear):
+hourly = (">>> 每小时盘面汇总" in joined)
+sent   = (">>> 推送到手机" in joined)
+clear  = (">>> 强信号解除" in joined)
+if not (hourly or sent or clear):
     print("NONE")
     sys.exit(0)
 
-if clear and not sent:
+def pick(kw):
+    for b in lines:
+        if kw in b:
+            return b.strip()
+    return ""
+price = pick("价格 ")
+state = pick("【当前状态】").replace("【当前状态】", "").strip()
+sig   = pick("【信号】").replace("【信号】", "").strip()
+src   = pick("数据源:").replace("数据源:", "").strip()
+brief = " | ".join(x for x in [price, sig, ("源 " + src) if src else ""] if x)[:200]
+
+if clear and not sent and not hourly:
     title, sub, msg = "✅ DOGE OI 强信号解除", "市场恢复平静", "已同步推送到手机 Telegram"
+elif hourly:
+    title = "📊 DOGE 每小时盘面汇总"
+    sub   = (state or "已推送 Telegram 手机 + 电脑")[:60]
+    msg   = brief
 else:
-    def pick(kw):
-        for b in lines:
-            if kw in b:
-                return b.strip()
-        return ""
-    price = pick("价格 ")
-    state = pick("【当前状态】").replace("【当前状态】", "").strip()
-    sig   = pick("【信号】").replace("【信号】", "").strip()
-    src   = pick("数据源:").replace("数据源:", "").strip()
     title = "🔔 DOGE OI 强信号（已推 Telegram）"
     sub   = (state or "A 级信号")[:60]
-    msg   = " | ".join(x for x in [price, sig, ("源 " + src) if src else ""] if x)[:200]
+    msg   = brief
 
 subprocess.run([
     "/usr/bin/osascript",
